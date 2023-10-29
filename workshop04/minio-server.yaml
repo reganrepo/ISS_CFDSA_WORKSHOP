@@ -1,0 +1,160 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mi-hsvc
+  namespace: mi-ns
+  labels:
+    app: minio
+    name: mi-hsvc
+spec:
+  clusterIP: None
+  selector:
+    app: minio
+    name: mi-po
+  ports:
+  - name: mi-data 
+    port: 9000
+    targetPort: 9000
+  - name: mi-console 
+    port: 9090
+    targetPort: 9090
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mi-sts
+  namespace: mi-ns
+  labels:
+    app: minio
+    name: mi-sts
+spec:
+  replicas: 3
+  serviceName: mi-hsvc
+  selector:
+    matchLabels:
+      app: minio
+      name: mi-po
+  volumeClaimTemplates:
+  - metadata:
+      name: data-vol
+    spec:
+      storageClassName: do-block-storage 
+      accessModes: [ ReadWriteOnce ]
+      resources:
+        requests:
+          storage: 1Gi
+  template:
+    metadata:
+      name: mi-po
+      labels:
+        app: minio
+        name: mi-po
+    spec:
+      initContainers:
+      - name: busybox
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - "chown 1001:1001 /data"
+        volumeMounts:
+        - name: data-vol
+          mountPath: /data
+      containers:
+      - name: mi-container
+        image: bitnami/minio:2023.10.25
+        imagePullPolicy: IfNotPresent
+        command:
+        - minio
+        - server
+        - --address=:9000
+        - --console-address=:9090
+        - http://mi-sts-{0...2}.mi-hsvc.mi-ns.svc.cluster.local/data
+        envFrom:
+        - configMapRef:
+            name: mi-cm
+        - secretRef:
+            name: mi-secret
+        readinessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          periodSeconds: 60
+          successThreshold: 1
+          failureThreshold: 3
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          periodSeconds: 60
+          successThreshold: 1
+          failureThreshold: 3
+          timeoutSeconds: 5
+        ports:
+        - name: mi-data
+          containerPort: 9000
+        - name: mi-console
+          containerPort: 9090
+        volumeMounts:
+        - name: data-vol
+          mountPath: /data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mi-svc
+  namespace: mi-ns
+  labels:
+    app: minio
+    name: mi-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: minio
+    name: mi-po
+  ports:
+  - name: mi-data 
+    port: 9000
+    targetPort: 9000
+  - name: mi-console 
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mi-ing
+  namespace: mi-ns
+  labels:
+    app: minio
+    name: mi-ing
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: data-167.172.7.205.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mi-svc
+            port:
+              name: mi-data
+  - host: console-167.172.7.205.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mi-svc
+            port:
+              name: mi-console

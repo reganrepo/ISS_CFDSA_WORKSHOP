@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mi-ns
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mi-cm
+  namespace: mi-ns
+data:
+  MINIO_ROOT_USER: admin
